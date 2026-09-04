@@ -1,0 +1,501 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HTML Viewer</title>
+
+<!-- Office.js: CDN primero, copia local como respaldo (ver README sobre uso offline). -->
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js" onerror="__officeCdnFailed()"></script>
+<script>
+function __officeCdnFailed() {
+  var s = document.createElement('script');
+  s.src = 'office.js';
+  s.onerror = function () { window.__officeDead = true; };
+  document.head.appendChild(s);
+}
+</script>
+
+<style>
+  :root {
+    --bg: #ffffff;
+    --ink: #1f2933;
+    --muted: #6b7684;
+    --line: #e2e6ea;
+    --accent: #e2603c;
+    --accent-ink: #ffffff;
+    --chip: #f4f6f8;
+    --warn-bg: #fff6e6;
+    --warn-ink: #7a4b00;
+    --warn-line: #f0d9a8;
+    --err-bg: #fdecea;
+    --err-ink: #8a1c12;
+    --err-line: #f3c2bc;
+    --ok-ink: #1f6b46;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    overflow: hidden;
+  }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  /* ---------- barra de herramientas (solo en modo edición) ---------- */
+  #bar {
+    flex: 0 0 auto;
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+    flex-wrap: wrap;
+  }
+  body.presenting #bar { display: none; }
+  body.presenting #stage { border: 0; }
+
+  button {
+    font: inherit;
+    padding: 5px 10px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--chip);
+    color: var(--ink);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  button:hover:not(:disabled) { border-color: #c8cfd6; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  button.primary:hover:not(:disabled) { filter: brightness(.94); }
+  button.icon { padding: 5px 8px; font-variant-numeric: tabular-nums; }
+
+  #name {
+    flex: 1 1 120px;
+    min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--muted);
+  }
+  #name b { color: var(--ink); font-weight: 600; }
+  #zoomBox {
+    display: flex; align-items: center; gap: 2px;
+    border: 1px solid var(--line); border-radius: 5px; background: var(--chip);
+  }
+  #zoomBox button { border: 0; background: transparent; padding: 4px 8px; }
+  #zoomVal { min-width: 44px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* ---------- escenario ---------- */
+  #stage { flex: 1 1 auto; position: relative; overflow: hidden; background: #fff; }
+  #frame {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    border: 0;
+    transform-origin: 0 0;
+    background: #fff;
+  }
+  #frame.hidden { display: none; }
+
+  #empty {
+    position: absolute; inset: 8px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; text-align: center; padding: 16px;
+    border: 2px dashed var(--line); border-radius: 8px;
+    color: var(--muted);
+  }
+  #empty.hidden { display: none; }
+  #empty h1 { font-size: 15px; margin: 0; color: var(--ink); font-weight: 600; }
+  #empty p { margin: 0; max-width: 34em; }
+  #empty kbd {
+    font: inherit; background: var(--chip); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 5px;
+  }
+  body.dragging #empty { border-color: var(--accent); color: var(--accent); }
+  body.dragging #frame { opacity: .25; }
+
+  /* ---------- avisos ---------- */
+  #notes { flex: 0 0 auto; }
+  body.presenting #notes { display: none; }
+  .note {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 10px; border-bottom: 1px solid var(--line);
+    font-size: 12px;
+  }
+  .note.warn { background: var(--warn-bg); color: var(--warn-ink); border-bottom-color: var(--warn-line); }
+  .note.err  { background: var(--err-bg);  color: var(--err-ink);  border-bottom-color: var(--err-line); }
+  .note span { flex: 1 1 auto; }
+  .note button { padding: 3px 8px; font-size: 12px; }
+
+  /* ---------- panel de pegado ---------- */
+  #paste {
+    flex: 0 0 auto;
+    display: none; flex-direction: column; gap: 6px;
+    padding: 8px; border-bottom: 1px solid var(--line); background: var(--chip);
+  }
+  #paste.open { display: flex; }
+  #paste textarea {
+    font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    width: 100%; height: 120px; resize: vertical;
+    border: 1px solid var(--line); border-radius: 5px; padding: 6px; background: #fff; color: var(--ink);
+  }
+  #paste .row { display: flex; gap: 6px; align-items: center; }
+  #paste .row span { flex: 1 1 auto; color: var(--muted); font-size: 12px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header id="bar">
+    <button id="btnFile" class="primary">Cargar HTML…</button>
+    <button id="btnPaste">Pegar código</button>
+    <button id="btnReload" disabled>Recargar</button>
+    <div id="zoomBox">
+      <button id="btnZoomOut" title="Reducir">−</button>
+      <span id="zoomVal">100%</span>
+      <button id="btnZoomIn" title="Ampliar">+</button>
+      <button id="btnZoomReset" class="icon" title="Restablecer zoom">↺</button>
+    </div>
+    <span id="name">Sin contenido</span>
+    <button id="btnClear" disabled>Quitar</button>
+    <input type="file" id="file" accept=".html,.htm,.svg,text/html,image/svg+xml" class="hidden">
+  </header>
+
+  <div id="notes"></div>
+
+  <div id="paste">
+    <textarea id="pasteText" placeholder="Pega aquí el código HTML completo del gráfico (incluyendo &lt;html&gt;, &lt;style&gt; y &lt;script&gt;)…" spellcheck="false"></textarea>
+    <div class="row">
+      <span>Se guardará dentro del .pptx.</span>
+      <button id="btnPasteCancel">Cancelar</button>
+      <button id="btnPasteOk" class="primary">Insertar</button>
+    </div>
+  </div>
+
+  <div id="stage">
+    <!-- allow-same-origin es necesario: sin el, el iframe queda en un origen opaco,
+         se aisla en otro proceso y en algunos webviews deja de recibir los eventos
+         de mouse (se pierden tooltips y clics). Ver README > Seguridad. -->
+    <iframe id="frame" class="hidden" sandbox="allow-scripts allow-same-origin allow-popups allow-downloads allow-forms allow-modals" referrerpolicy="no-referrer" title="Contenido"></iframe>
+    <div id="empty">
+      <h1>Arrastra aquí un archivo HTML</h1>
+      <p>O usa <kbd>Cargar HTML…</kbd> para elegirlo. El archivo queda guardado <b>dentro de esta presentación</b>, así que el .pptx viaja solo: puedes enviarlo a un cliente y el gráfico interactivo sigue funcionando.</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- constantes
+  var K_PAYLOAD = 'payload';          // clave por instancia del add-in
+  var K_SLIDE   = 'payload:slide:';   // respaldo por id de diapositiva
+  var SOFT_LIMIT = 1500000;           // ~1.5 MB de HTML: a partir de aquí, advertimos
+  var HARD_HINT  = 4000000;           // ~4 MB: casi seguro que PowerPoint se queja
+  var ZOOMS = [25, 33, 50, 67, 75, 90, 100, 110, 125, 150, 175, 200, 250, 300];
+
+  // ---------------------------------------------------------------- estado
+  var state = {
+    html: null,
+    name: null,
+    zoom: 100,
+    officeReady: false,
+    slideId: null,
+    presenting: false
+  };
+
+  // ---------------------------------------------------------------- utilidades DOM
+  function $(id) { return document.getElementById(id); }
+  var els = {
+    body: document.body, notes: $('notes'), frame: $('frame'), empty: $('empty'),
+    name: $('name'), file: $('file'), paste: $('paste'), pasteText: $('pasteText'),
+    btnFile: $('btnFile'), btnPaste: $('btnPaste'), btnReload: $('btnReload'),
+    btnClear: $('btnClear'), zoomVal: $('zoomVal')
+  };
+
+  function note(kind, text, actionLabel, action) {
+    var el = document.createElement('div');
+    el.className = 'note ' + kind;
+    var span = document.createElement('span');
+    span.textContent = text;
+    el.appendChild(span);
+    if (actionLabel) {
+      var b = document.createElement('button');
+      b.textContent = actionLabel;
+      b.onclick = function () { el.remove(); action && action(); };
+      el.appendChild(b);
+    }
+    var x = document.createElement('button');
+    x.textContent = 'Cerrar';
+    x.onclick = function () { el.remove(); };
+    el.appendChild(x);
+    els.notes.appendChild(el);
+    return el;
+  }
+  function clearNotes() { els.notes.textContent = ''; }
+
+  function fmtSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(0) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
+  // ---------------------------------------------------------------- render
+  function applyZoom() {
+    var z = state.zoom / 100;
+    els.frame.style.transform = 'scale(' + z + ')';
+    els.frame.style.width = (100 / z) + '%';
+    els.frame.style.height = (100 / z) + '%';
+    els.zoomVal.textContent = state.zoom + '%';
+  }
+
+  function render() {
+    var has = !!state.html;
+    els.frame.classList.toggle('hidden', !has);
+    els.empty.classList.toggle('hidden', has);
+    els.btnReload.disabled = !has;
+    els.btnClear.disabled = !has;
+    els.name.innerHTML = '';
+    if (has) {
+      var b = document.createElement('b');
+      b.textContent = state.name || 'Contenido';
+      els.name.appendChild(b);
+      els.name.appendChild(document.createTextNode(' · ' + fmtSize(state.html.length)));
+      els.frame.srcdoc = state.html;
+    } else {
+      els.frame.removeAttribute('srcdoc');
+    }
+    applyZoom();
+  }
+
+  function setZoom(z) {
+    state.zoom = Math.max(10, Math.min(400, z));
+    applyZoom();
+    persist();  // el zoom también se guarda en el deck
+  }
+
+  function stepZoom(dir) {
+    var i = 0;
+    for (var k = 0; k < ZOOMS.length; k++) {
+      if (ZOOMS[k] < state.zoom) i = k + 1;
+    }
+    setZoom(ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, i + dir))] || state.zoom);
+  }
+
+  // ---------------------------------------------------------------- persistencia
+  function settings() {
+    try {
+      return (state.officeReady && Office.context && Office.context.document)
+        ? Office.context.document.settings : null;
+    } catch (e) { return null; }
+  }
+
+  function persist(force) {
+    var s = settings();
+    if (!s) return;
+    var payload = state.html
+      ? { html: state.html, name: state.name, zoom: state.zoom, savedAt: new Date().toISOString() }
+      : null;
+
+    if (payload && payload.html.length > SOFT_LIMIT && !force) {
+      clearNotes();
+      note('warn',
+        'El HTML pesa ' + fmtSize(payload.html.length) + '. Guardarlo dentro del .pptx puede hacer el archivo lento o fallar. ' +
+        'Se está mostrando igual, pero aún no lo he guardado.',
+        'Guardar de todos modos',
+        function () { persist(true); });
+      return;
+    }
+
+    try {
+      if (payload) {
+        s.set(K_PAYLOAD, payload);
+        if (state.slideId) s.set(K_SLIDE + state.slideId, payload);
+      } else {
+        s.remove(K_PAYLOAD);
+        if (state.slideId) s.remove(K_SLIDE + state.slideId);
+      }
+      s.saveAsync(function (r) {
+        if (r.status === Office.AsyncResultStatus.Failed) {
+          note('err', 'No pude guardar el contenido en la presentación: ' +
+            ((r.error && r.error.message) || 'error desconocido') +
+            (payload && payload.html.length > HARD_HINT ? ' (el HTML es muy grande).' : ''));
+        }
+      });
+    } catch (e) {
+      note('err', 'No pude guardar el contenido en la presentación: ' + e.message);
+    }
+  }
+
+  function restore() {
+    var s = settings();
+    if (!s) return false;
+    var p = null;
+    try {
+      if (state.slideId) p = s.get(K_SLIDE + state.slideId);
+      if (!p) p = s.get(K_PAYLOAD);
+    } catch (e) { p = null; }
+    if (!p || !p.html) return false;
+    state.html = p.html;
+    state.name = p.name || 'Contenido';
+    state.zoom = p.zoom || 100;
+    render();
+    return true;
+  }
+
+  // ---------------------------------------------------------------- carga de contenido
+  function load(html, name) {
+    if (!html || !html.trim()) {
+      note('err', 'El archivo está vacío.');
+      return;
+    }
+    clearNotes();
+    state.html = html;
+    state.name = name || 'Contenido';
+    render();
+    persist();
+    if (!settings()) {
+      note('warn', 'El gráfico se ve, pero Office.js no está disponible, así que no puedo guardarlo dentro del .pptx. ' +
+                   'Se perderá al cerrar la presentación.');
+    }
+  }
+
+  function readFile(f) {
+    if (!f) return;
+    var okType = /\.(html?|svg)$/i.test(f.name) || /html|svg/.test(f.type || '');
+    if (!okType) {
+      note('err', 'Solo puedo cargar archivos .html, .htm o .svg. Recibí: ' + f.name);
+      return;
+    }
+    var fr = new FileReader();
+    fr.onload = function () { load(String(fr.result), f.name); };
+    fr.onerror = function () { note('err', 'No pude leer el archivo ' + f.name + '.'); };
+    fr.readAsText(f);
+  }
+
+  // ---------------------------------------------------------------- eventos de UI
+  els.btnFile.onclick = function () { els.file.value = ''; els.file.click(); };
+  els.file.onchange = function () { readFile(els.file.files && els.file.files[0]); };
+
+  els.btnPaste.onclick = function () {
+    els.paste.classList.add('open');
+    els.pasteText.value = '';
+    els.pasteText.focus();
+  };
+  $('btnPasteCancel').onclick = function () { els.paste.classList.remove('open'); };
+  $('btnPasteOk').onclick = function () {
+    var v = els.pasteText.value;
+    els.paste.classList.remove('open');
+    if (v.trim()) load(v, 'Pegado');
+  };
+
+  els.btnReload.onclick = function () {
+    var h = state.html;
+    els.frame.removeAttribute('srcdoc');
+    setTimeout(function () { els.frame.srcdoc = h; }, 30);
+  };
+
+  els.btnClear.onclick = function () {
+    state.html = null; state.name = null;
+    clearNotes(); render(); persist(true);
+  };
+
+  $('btnZoomIn').onclick = function () { stepZoom(1); };
+  $('btnZoomOut').onclick = function () { stepZoom(-1); };
+  $('btnZoomReset').onclick = function () { setZoom(100); };
+
+  // arrastrar y soltar
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      if (state.presenting) return;
+      e.preventDefault(); e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
+      els.body.classList.add('dragging');
+    });
+  });
+  ['dragleave', 'dragend'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      if (e.relatedTarget && e.relatedTarget !== document.documentElement) return;
+      els.body.classList.remove('dragging');
+    });
+  });
+  document.addEventListener('drop', function (e) {
+    if (state.presenting) return;
+    e.preventDefault(); e.stopPropagation();
+    els.body.classList.remove('dragging');
+    var dt = e.dataTransfer;
+    if (dt.files && dt.files.length) { readFile(dt.files[0]); return; }
+    var txt = dt.getData('text/html') || dt.getData('text/plain');
+    if (txt && txt.trim()) load(txt, 'Soltado');
+  });
+
+  // ---------------------------------------------------------------- modo presentación
+  function setPresenting(on) {
+    state.presenting = !!on;
+    els.body.classList.toggle('presenting', state.presenting);
+  }
+
+  function detectView() {
+    try {
+      Office.context.document.getActiveViewAsync(function (r) {
+        if (r.status === Office.AsyncResultStatus.Succeeded) {
+          setPresenting(r.value === 'read' || r.value === Office.ActiveView.Read);
+        }
+      });
+    } catch (e) { /* sin soporte: nos quedamos en modo edición */ }
+  }
+
+  // ---------------------------------------------------------------- id de diapositiva
+  function resolveSlideId(cb) {
+    try {
+      if (typeof PowerPoint === 'undefined' ||
+          !Office.context.requirements.isSetSupported('PowerPointApi', '1.5')) return cb(null);
+      PowerPoint.run(function (ctx) {
+        var sel = ctx.presentation.getSelectedSlides();
+        sel.load('items/id');
+        return ctx.sync().then(function () {
+          cb(sel.items.length ? sel.items[0].id : null);
+        });
+      }).catch(function () { cb(null); });
+    } catch (e) { cb(null); }
+  }
+
+  // ---------------------------------------------------------------- arranque
+  function boot() {
+    state.officeReady = true;
+    detectView();
+    try {
+      Office.context.document.addHandlerAsync(Office.EventType.ActiveViewChanged, function (a) {
+        setPresenting(a.activeView === 'read' || a.activeView === Office.ActiveView.Read);
+      });
+    } catch (e) { /* opcional */ }
+
+    resolveSlideId(function (id) {
+      state.slideId = id;
+      if (!restore()) render();
+    });
+  }
+
+  function waitForOffice(tries) {
+    if (typeof Office !== 'undefined' && Office.onReady) {
+      Office.onReady(boot);
+      return;
+    }
+    if (window.__officeDead || tries <= 0) {
+      // Sin Office.js: el visor sigue sirviendo como vista previa, sin persistencia.
+      render();
+      note('warn', 'No pude cargar Office.js (¿sin conexión?). Puedo mostrar un HTML que cargues ahora, ' +
+                   'pero no puedo leer ni guardar lo que esté dentro del .pptx.');
+      return;
+    }
+    setTimeout(function () { waitForOffice(tries - 1); }, 100);
+  }
+
+  render();
+  waitForOffice(150);   // ~15 s de gracia
+})();
+</script>
+</body>
+</html>
